@@ -286,6 +286,39 @@ No changes to `LMCacheEngine`, `StorageManager`, or any config schema.
 Phase 2 and Phase 3 are tracked as follow-up issues, not part of the
 Phase 1 PR.
 
+## Executable Specification (E2E Test)
+
+The end-to-end test at
+[`tests/e2e/test_prefetch_api_e2e.py`](../../../../tests/e2e/test_prefetch_api_e2e.py)
+is the implementation's pass/fail contract. It boots a real `vllm serve`
+subprocess with the LMCache connector and the internal_api_server enabled,
+and exercises:
+
+1. **Populate** — a real completion request to vLLM stores KV chunks in
+   the CPU + Disk tiers.
+2. **Evict CPU** — `DELETE /cache/clear?locations=LocalCPUBackend` removes
+   the CPU copies; the disk copies remain.
+3. **Prefetch** — `POST /prefetch/by_tokens` with `pin=true`, then
+   `GET /prefetch/status/{id}` polled until `status == "done"`.
+4. **Tier-hit assertion** — verifies the LocalCPUBackend now contains
+   chunks again (pulled up from disk by the prefetch). This is the
+   load-bearing assertion for "did the API actually do anything?"
+5. **Warm vLLM hit** — a second completion with the same prompt hits the
+   warm tier; LMCache retrieve activity is observable in the vLLM serve
+   log.
+6. **Cancel** — `POST /prefetch/cancel/{id}` releases the pinned chunks;
+   a second call returns `released: 0` (idempotent).
+
+Plus three error-path tests:
+
+- Duplicate `request_id` while in flight → **409**.
+- Status of an unknown id → `200` with `{"status": "unknown"}`.
+- Body missing required fields → **400** or **422**.
+
+The implementation is complete when these four tests pass on a
+GPU-equipped runner. Until then, every test should fail at the call to
+the not-yet-existing `/prefetch/...` endpoint.
+
 ## Open Questions
 
 1. **Auth / network exposure.** `internal_api_server` is "internal" by
