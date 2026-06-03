@@ -1,0 +1,49 @@
+name: Codex review trigger
+
+# Posts an `@codex review` comment on every PR event so the native
+# ChatGPT Codex GitHub integration runs a review.
+#
+# Why this workflow exists: the native Codex auto-review only fires for
+# PRs opened by the account that owns the Codex subscription. PRs from
+# other contributors are NOT auto-reviewed. This workflow closes that
+# gap by mentioning @codex on every PR (regardless of author) and on
+# every push.
+#
+# Cost: this workflow uses zero OpenAI credits. Each triggered review
+# is billed against the ChatGPT subscription that owns the Codex
+# GitHub integration.
+#
+# Side effect: PRs opened by the subscription owner will receive both
+# the native auto-review AND this workflow's @codex comment, so Codex
+# may post two reviews on those PRs. The duplication is accepted in
+# exchange for full contributor coverage.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: codex-mention-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  request-review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Comment @codex review on the PR
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: '@codex review',
+            });
